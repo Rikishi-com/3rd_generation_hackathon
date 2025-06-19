@@ -20,6 +20,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 
 
+
 # pydubは分割処理では不要になったため、コメントアウトまたは削除を検討
 # from pydub import AudioSegment 
 
@@ -30,6 +31,9 @@ from googleapiclient.discovery import build
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+
+from PIL import Image # Pillow library for image manipulation
+import pytesseract # Tesseract OCR (pip install pytesseract)
 
 # --- YouTube Data API Client Initialization ---
 youtube = build('youtube', 'v3', developerKey=settings.YOUTUBE_API_KEY)
@@ -123,8 +127,8 @@ class YoutubePaidSummarizerAPI(APIView):
                     '--force-overwrites'
                 ]
 
-                print(f"   yt-dlp コマンド実行: {' '.join(yt_dlp_command)}")
-                print(f"   subprocess.run 実行時のPATH (yt-dlp): {os.environ.get('PATH')}")
+                print(f"    yt-dlp コマンド実行: {' '.join(yt_dlp_command)}")
+                print(f"    subprocess.run 実行時のPATH (yt-dlp): {os.environ.get('PATH')}")
                 # capture_output=False にすると、yt-dlpの進捗がリアルタイムで表示される
                 subprocess.run(yt_dlp_command, check=True, capture_output=False)
 
@@ -135,13 +139,13 @@ class YoutubePaidSummarizerAPI(APIView):
             except subprocess.CalledProcessError as e:
                 error_output = e.stderr.decode('utf-8') if e.stderr else "(エラー出力なし)"
                 print(f"ステップ2エラー: yt-dlp コマンド実行エラー: {e.cmd}")
-                print(f"   リターンコード: {e.returncode}")
-                print(f"   標準エラー出力:\n{error_output}")
+                print(f"    リターンコード: {e.returncode}")
+                print(f"    標準エラー出力:\n{error_output}")
                 print(f"トレースバック:\n{traceback.format_exc()}")
                 return Response({"error": "動画のダウンロードに失敗しました。", "detail": f"yt-dlp コマンド実行エラー: {e.cmd}. エラー出力: {error_output}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             except FileNotFoundError as e:
                 print(f"ステップ2エラー: yt-dlp 実行ファイルが見つかりません: {e.filename}")
-                print(f"   詳細: {e.strerror}")
+                print(f"    詳細: {e.strerror}")
                 print(f"トレースバック:\n{traceback.format_exc()}")
                 return Response({"error": "動画のダウンロードに失敗しました。", "detail": f"yt-dlp 実行ファイルが見つかりません: {e.filename}. PATHが正しく設定されているか確認してください。"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             except Exception as e:
@@ -161,14 +165,14 @@ class YoutubePaidSummarizerAPI(APIView):
             transcript_text = ""
             try:
                 # 音声ファイルをチャンクに分割（ffmpeg直接呼び出し）
-                print(f"   音声を {self.CHUNK_LENGTH_SECONDS} 秒ごとに分割中...")
+                print(f"    音声を {self.CHUNK_LENGTH_SECONDS} 秒ごとに分割中...")
                 chunk_files = self._split_audio_ffmpeg( # _split_audio から _split_audio_ffmpeg に変更
                     audio_file_path=converted_audio_filepath,
                     total_duration_seconds=total_duration_seconds, # 動画の総時間を渡す
                     chunk_length_seconds=self.CHUNK_LENGTH_SECONDS,
                     output_dir=temp_dir
                 )
-                print(f"   {len(chunk_files)} 個のチャンクを作成しました。")
+                print(f"    {len(chunk_files)} 個のチャンクを作成しました。")
 
                 if not chunk_files:
                     print("警告: 分割された音声チャンクがありません。文字起こしできません。")
@@ -188,12 +192,12 @@ class YoutubePaidSummarizerAPI(APIView):
                             try:
                                 result = future.result()
                                 if "error" in result:
-                                    print(f"   チャンク {result['index']} の文字起こし中にエラーが発生しました: {result['error']}")
+                                    print(f"    チャンク {result['index']} の文字起こし中にエラーが発生しました: {result['error']}")
                                     transcription_results[result["index"]] = f"[文字起こしエラー: {result['error']}]"
                                 else:
                                     transcription_results[result["index"]] = result["text"]
                             except Exception as exc:
-                                print(f"   チャンク {chunk_info['index']} の処理中に予期せぬ例外が発生しました: {exc}")
+                                print(f"    チャンク {chunk_info['index']} の処理中に予期せぬ例外が発生しました: {exc}")
                                 transcription_results[chunk_info["index"]] = f"[不明な文字起こしエラー: {exc}]"
 
                     # 全てのチャンクの文字起こし結果を結合
@@ -226,6 +230,7 @@ class YoutubePaidSummarizerAPI(APIView):
                 prompt_summary = f"あなたは教材を作るプロの講師です。これから渡すYouTube動画のタイトルと文字起こしを読み、要約してください。ただし、物理や数学の場合、以下のように問題の解法をステップごとに説明してください。【出力形式のルール】1. 問題の内容を簡潔に説明してください。2. 解くためのステップを順番に書いてください（STEP 1, STEP 2 のように）ex。3. 使用する公式や条件はすべて明記してください。4. 数式は LaTeX 形式で記述してください（例：\\( y = ax^2 + bx + c \\)）。5.数式が出てくる場合は直前と直後に改行['\\']を行ってください。6. 解答に至るまでの式変形、代入、計算手順を詳細に記述してください。7. 最後に答えも明記してください。\n\n動画タイトル: {title}\n\n文字起こしデータ:\n{transcript_text}\n\n要約:"
 
                 print("   OpenAI API (要約) リクエスト送信中...")
+
                 response_summary_openai = openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
@@ -277,6 +282,7 @@ class YoutubePaidSummarizerAPI(APIView):
                     f"練習問題と解答:"
                 )
                 print("   OpenAI API (練習問題) リクエスト送信中...")
+
                 try:
                     response_problems_openai = openai_client.chat.completions.create(
                         model="gpt-4",
@@ -436,6 +442,7 @@ class YoutubePaidSummarizerAPI(APIView):
             return []
 
 
+
 # --------------------------------------------------------------------------
     # グラフ動画生成メソッド (エラーハンドリング・サニタイズ強化 最終版)
     # --------------------------------------------------------------------------
@@ -565,6 +572,7 @@ class FormulaScene(Scene):
         allowed_vars = {'x', 'y'}
         filtered_equations = []
 
+
         for eq in latex_equations:
             # LaTeXの括り（\( と \)）を除去
             stripped_eq = eq.strip().replace(r"\(", "").replace(r"\)", "")
@@ -581,6 +589,7 @@ class FormulaScene(Scene):
                 filtered_equations.append(eq)
             else:
                 print(f"除外: {eq}（含まれる変数: {variables}）")
+
 
         return filtered_equations
 
@@ -666,7 +675,7 @@ class FormulaScene(Scene):
             ]
 
             try:
-                print(f"   ffmpeg でチャンク {i} を作成中: {start_time_seconds}s - {start_time_seconds + duration_current_chunk}s")
+                print(f"    ffmpeg でチャンク {i} を作成中: {start_time_seconds}s - {start_time_seconds + duration_current_chunk}s")
                 subprocess.run(ffmpeg_command, check=True, capture_output=True) # 標準出力をキャプチャしてログを抑制
                 chunks.append({"index": i, "path": chunk_file_path})
             except subprocess.CalledProcessError as e:
@@ -691,7 +700,7 @@ class FormulaScene(Scene):
         chunk_index = chunk_info["index"]
         chunk_path = chunk_info["path"]
 
-        print(f"   チャンク {chunk_index} の文字起こしを開始します ({os.path.basename(chunk_path)})...")
+        print(f"    チャンク {chunk_index} の文字起こしを開始します ({os.path.basename(chunk_path)})...")
 
         try:
             if openai_client is None:
@@ -701,7 +710,7 @@ class FormulaScene(Scene):
             file_size_mb = os.path.getsize(chunk_path) / (1024 * 1024)
             if file_size_mb > 25:
                 # このケースはffmpegのc:a copyでは発生しにくいが、念のため
-                print(f"   警告: チャンク {chunk_index} のファイルサイズが25MBを超えています ({file_size_mb:.2f}MB)。スキップします。")
+                print(f"    警告: チャンク {chunk_index} のファイルサイズが25MBを超えています ({file_size_mb:.2f}MB)。スキップします。")
                 return {"index": chunk_index, "text": "", "error": f"ファイルサイズが25MBを超過 ({file_size_mb:.2f}MB)"}
 
 
@@ -711,12 +720,228 @@ class FormulaScene(Scene):
                     file=audio_file,
                     language="ja"
                 )
-            print(f"   チャンク {chunk_index} の文字起こしが完了しました。")
+            print(f"    チャンク {chunk_index} の文字起こしが完了しました。")
             return {"index": chunk_index, "text": transcript.text}
         except openai.APIError as e:
-            print(f"   チャンク {chunk_index} でOpenAI APIエラーが発生しました: {e}")
+            print(f"    チャンク {chunk_index} でOpenAI APIエラーが発生しました: {e}")
             return {"index": chunk_index, "text": "", "error": f"OpenAI APIエラー: {e.code} - {e.message}"}
         except Exception as e:
-            print(f"   チャンク {chunk_index} の文字起こし中にエラーが発生しました: {e}")
+            print(f"    チャンク {chunk_index} の文字起こし中にエラーが発生しました: {e}")
             print(f"トレースバック:\n{traceback.format_exc()}")
             return {"index": chunk_index, "text": "", "error": str(e)}
+        
+
+class AnswerProcessingAPI(APIView):
+    """
+    API to receive a student's answer (JPEG/PDF) directly in the request body,
+    process it for corrections, identify habits, and suggest references using OpenAI GPT-4o Vision.
+    The input PDF/JPEG is assumed to contain both the problem statement and the student's answer.
+    """
+
+    def post(self, request, *args, **kwargs):
+        # request.FILES は使用しないため、request.body から直接データを取得
+        uploaded_file_data = request.body
+        content_type = request.META.get('HTTP_CONTENT_TYPE') or request.META.get('CONTENT_TYPE')
+
+        if not uploaded_file_data:
+            print("エラー: リクエストボディにファイルデータが含まれていません。")
+            return Response({"error": "ファイルデータが提供されていません。"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        file_extension = ''
+        original_filename = 'uploaded_file' # デフォルトのファイル名
+        
+        # Content-Type からファイル形式を推測
+        if content_type:
+            if 'application/pdf' in content_type:
+                file_extension = '.pdf'
+                original_filename = 'answer.pdf'
+            elif 'image/jpeg' in content_type or 'image/jpg' in content_type:
+                file_extension = '.jpeg'
+                original_filename = 'answer.jpeg'
+            elif 'image/png' in content_type:
+                file_extension = '.png'
+                original_filename = 'answer.png'
+            else:
+                print(f"エラー: サポートされていないContent-Typeです: {content_type}。許可される形式はJPEG, PNG, PDFです。")
+                return Response({"error": "サポートされているファイル形式はJPEG, PNG, PDFのみです。"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            print("エラー: Content-Typeヘッダーがありません。ファイル形式を判断できません。")
+            return Response({"error": "Content-Typeヘッダーが必須です（例: application/pdf, image/jpeg, image/png）。"}, status=status.HTTP_400_BAD_REQUEST)
+
+        temp_dir = None
+        temp_filepath = None
+        processed_image_path = None
+        extracted_text_from_ocr = "" 
+
+        try:
+            temp_dir = tempfile.mkdtemp(dir=settings.MEDIA_ROOT)
+            print(f"一時ディレクトリを作成しました: {temp_dir}")
+
+            # 取得したバイナリデータを一時ファイルとして保存
+            temp_filepath = os.path.join(temp_dir, original_filename)
+            with open(temp_filepath, 'wb') as destination: # 'wb+'ではなく'wb'で十分
+                destination.write(uploaded_file_data)
+            print(f"解答ファイルを一時保存しました: {temp_filepath}")
+
+            if file_extension == '.pdf':
+                print("PDFからの画像抽出を開始します (PyMuPDFを使用)。")
+                try:
+                    doc = fitz.open(temp_filepath)
+                    if not doc.page_count:
+                        print("エラー: PDFにページが含まれていません。")
+                        return Response({"error": "PDFにページが含まれていません。", "detail": "Empty PDF document."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    page = doc.load_page(0)
+                    
+                    zoom = 300 / 72 
+                    mat = fitz.Matrix(zoom, zoom)
+                    
+                    pix = page.get_pixmap(matrix=mat)
+                    
+                    base_name = os.path.splitext(original_filename)[0]
+                    processed_image_filename = os.path.join(temp_dir, f'{base_name}_page_0001.png')
+                    
+                    pix.save(processed_image_filename)
+                    processed_image_path = processed_image_filename
+                    doc.close()
+                    print(f"PyMuPDFでPDFから画像を抽出しました: {processed_image_path}")
+                    
+                except fitz.EmptyFileError:
+                    print(f"PyMuPDFエラー: 空のPDFファイルがアップロードされました: {temp_filepath}")
+                    return Response({"error": "空のPDFファイルです。", "detail": "Empty PDF document."}, status=status.HTTP_400_BAD_REQUEST)
+                except fitz.PasswordError:
+                    print(f"PyMuPDFエラー: パスワードで保護されたPDFファイルです: {temp_filepath}")
+                    return Response({"error": "保護されたPDFファイルです。", "detail": "Password protected PDF."}, status=status.HTTP_400_BAD_REQUEST)
+                except Exception as e:
+                    print(f"PyMuPDFでのPDF画像抽出中に予期せぬエラーが発生しました: {e}")
+                    print(f"トレースバック:\n{traceback.format_exc()}")
+                    return Response({"error": "PDFからの画像抽出に失敗しました (PyMuPDF)。", "detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            else:
+                processed_image_path = temp_filepath
+
+            # Tesseract OCR を実行 (LLMの参考用のため、エラーが発生しても処理を続行)
+            if processed_image_path and os.path.exists(processed_image_path):
+                print("Tesseract OCRによるテキスト抽出を開始します。")
+                try:
+                    image_for_ocr = Image.open(processed_image_path)
+                    extracted_text_from_ocr = pytesseract.image_to_string(image_for_ocr, lang='jpn+eng')
+                    print("Tesseract OCRによるテキスト抽出が完了しました。")
+                except pytesseract.pytesseract.TesseractNotFoundError:
+                    print("エラー: Tesseract OCRがシステムにインストールされていないか、PATHが設定されていません。")
+                except Exception as e:
+                    print(f"Tesseract OCRの実行中にエラーが発生しました: {e}")
+                    print(f"トレースバック:\n{traceback.format_exc()}")
+            else:
+                print("警告: 処理すべき画像ファイルが見つからないため、Tesseract OCRをスキップします。")
+
+            # 3. OpenAI GPT-4o Vision で解答内容を解析、手直し、癖の特定
+            print("ステップ3: OpenAI GPT-4o Vision で解答内容の解析を開始します。")
+            overall_user_habit_analysis = "解析できませんでした。"
+
+            if openai_client is None:
+                print("エラー: OpenAI API クライアントが初期化されていません。設定を確認してください。")
+                return Response({"error": "OpenAI API クライアントがロードされていません。設定を確認してください。"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            try:
+                with open(processed_image_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+                prompt_text = f"""
+以下の画像には、**問題文と生徒の手書き解答の両方**が含まれています。
+画像を正確に読み取り、**問題文の内容を完全に理解した上で**、それに対する生徒の解答の**全体の解答方針、計算過程、論理展開**について修正点や改善点を**総合的に**指摘してください。
+また、この解答から読み取れる**解答者の典型的な学習の癖や思考パターン**を詳細に分析し、今後の学習に役立つ具体的なアドバイスを提供してください。
+数式や図形についても正確に読み取り、**LaTeX形式**（インライン数式は`$`で囲む、ディスプレイ数式は`$$`で囲む）で表現して修正案に含めてください。
+
+---
+**【参考情報：Tesseract OCRで抽出されたテキスト】**
+この情報は、画像内の手書き文字や複雑なレイアウトが非常に読みにくい場合の補助として利用してください。
+{extracted_text_from_ocr if extracted_text_from_ocr else "（OCRによるテキストは抽出されませんでした）"}
+
+---
+以下のフォーマットで出力してください。
+
+## 全体的な解答の修正案と改善点
+（ここに解答全体にわたる修正点、正しい方針、改善のためのアドバイスを詳細に記述。数式はLaTeX形式で表現）
+
+## 解答者の学習の癖と今後のアドバイス
+（ここに解答から読み取れる生徒の典型的な誤りパターンや学習の癖を具体的に記述し、改善策も提示）
+"""
+
+                messages = [
+                    {"role": "system", "content": "あなたは数学や物理の家庭教師アシスタントです。提供された画像（問題文と生徒の解答が一体となっている）を総合的に評価し、全体的な修正案と学習の癖を特定し、助言を提供してください。数式はLaTeX形式で正確に表現します。"}, 
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ]
+                
+                print("OpenAI GPT-4o Vision APIへのリクエストを送信中...")
+                response_gpt4_vision = openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    max_tokens=2500,
+                    temperature=0.5,
+                )
+                
+                full_analysis = response_gpt4_vision.choices[0].message.content.strip()
+                print("GPT-4o Visionからの応答を受信しました。")
+                
+                match_correction_advice = re.search(r'## 全体的な解答の修正案と改善点\n([\s\S]*?)(?=## 解答者の学習の癖と今後のアドバイス|\Z)', full_analysis)
+                if match_correction_advice:
+                    pass 
+                else:
+                    print("警告: LLMの出力から「全体的な解答の修正案と改善点」セクションをパースできませんでした。")
+
+                match_habit_analysis = re.search(r'## 解答者の学習の癖と今後のアドバイス\n([\s\S]*)', full_analysis)
+                if match_habit_analysis:
+                    overall_user_habit_analysis = match_habit_analysis.group(1).strip()
+                else:
+                    print("警告: LLMの出力から「解答者の学習の癖と今後のアドバイス」セクションをパースできませんでした。")
+                    overall_user_habit_analysis = "「解答者の学習の癖と今後のアドバイス」のセクションが見つかりませんでした。"
+                        
+                print("解答の総合的な解析処理が完了しました。")
+
+            except openai.RateLimitError as e:
+                print(f"エラー: OpenAI APIレート制限またはクォータ超過。詳細: {e.message}")
+                print(f"トレースバック:\n{traceback.format_exc()}")
+                return Response({
+                    "error": "OpenAI APIの使用上限に達しました。", 
+                    "detail": f"OpenAIからのメッセージ: {e.message}"
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            except openai.APIStatusError as e:
+                print(f"エラー: OpenAI APIからHTTPステータスエラーが返されました: {e.status_code} - {e.response}")
+                print(f"トレースバック:\n{traceback.format_exc()}")
+                return Response({
+                    "error": "OpenAI APIとの通信中にエラーが発生しました。",
+                    "detail": f"HTTPステータス: {e.status_code}, メッセージ: {e.response}"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except openai.APIConnectionError as e:
+                print(f"エラー: OpenAI APIへの接続中にエラーが発生しました: {e}")
+                print(f"トレースバック:\n{traceback.format_exc()}")
+                return Response({
+                    "error": "OpenAI APIへのネットワーク接続に失敗しました。",
+                    "detail": str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except Exception as e:
+                print(f"エラー: 解答解析中に予期せぬOpenAI API関連のエラーが発生しました: {e}")
+                print(f"トレースバック:\n{traceback.format_exc()}")
+                return Response({"error": "解答の解析中に予期せぬエラーが発生しました。", "detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+            return Response({
+                "overall_user_habit_analysis": overall_user_habit_analysis,
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            traceback_str = traceback.format_exc()
+            print(f"API処理の初期段階で予期せぬクリティカルエラーが発生しました: {e}")
+            print(f"トレースバック:\n{traceback_str}")
+            return Response({"error": "処理中に予期せぬクリティカルエラーが発生しました。", "detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if temp_dir and os.path.exists(temp_dir):
+                print(f"一時ディレクトリを削除します: {temp_dir}")
+                shutil.rmtree(temp_dir)
